@@ -200,7 +200,6 @@ var (
 // EncodeToken allows writing a ProcInst with Target set to "xml" only as the first token
 // in the stream.
 func (enc *Encoder) EncodeToken(t Token) error {
-
 	p := &enc.p
 	switch t := t.(type) {
 	case StartElement:
@@ -249,7 +248,6 @@ func (enc *Encoder) EncodeToken(t Token) error {
 		p.WriteString(">")
 	default:
 		return fmt.Errorf("xml: EncodeToken of invalid token type")
-
 	}
 	return p.cachedWriteError()
 }
@@ -382,19 +380,20 @@ func (p *printer) deleteAttrPrefix(prefix string) {
 	delete(p.attrNS, prefix)
 }
 
-func (p *printer) markPrefix() {
-	p.prefixes = append(p.prefixes, "")
+func (p *printer) markPrefix(prefix string) {
+	p.prefixes = append(p.prefixes, prefix)
 }
 
-func (p *printer) popPrefix() {
-	for len(p.prefixes) > 0 {
-		prefix := p.prefixes[len(p.prefixes)-1]
-		p.prefixes = p.prefixes[:len(p.prefixes)-1]
-		if prefix == "" {
-			break
-		}
-		p.deleteAttrPrefix(prefix)
+func (p *printer) popPrefix() string {
+	if len(p.prefixes) == 0 {
+		return ""
 	}
+	prefix := p.prefixes[len(p.prefixes)-1]
+	p.prefixes = p.prefixes[:len(p.prefixes)-1]
+	if prefix != "" {
+		//p.deleteAttrPrefix(prefix)
+	}
+	return prefix
 }
 
 var (
@@ -487,6 +486,20 @@ func (p *printer) marshalValue(val reflect.Value, finfo *fieldInfo, startTemplat
 			if v, ok := fv.Interface().(Name); ok && v.Local != "" {
 				start.Name = v
 			}
+		}
+		for k, v := range xmlname.namespaces {
+			if k == "" {
+				continue
+			}
+			p.setPrefixNS(k, v)
+
+			nsAttr := Attr{
+				Name: Name{
+					Local: "xmlns:" + k,
+				},
+				Value: v,
+			}
+			start.Attr = append(start.Attr, nsAttr)
 		}
 	}
 	if start.Name.Local == "" && finfo != nil {
@@ -695,16 +708,33 @@ func (p *printer) writeStart(start *StartElement) error {
 	}
 
 	p.tags = append(p.tags, start.Name)
-	p.markPrefix()
 
 	p.writeIndent(1)
 	p.WriteByte('<')
-	p.WriteString(start.Name.Local)
-
 	if start.Name.Space != "" {
-		p.WriteString(` xmlns="`)
-		p.EscapeString(start.Name.Space)
-		p.WriteByte('"')
+		if prefix, ok := p.attrPrefix[start.Name.Space]; ok {
+			p.WriteString(prefix)
+			p.WriteByte(':')
+			p.WriteString(start.Name.Local)
+			p.markPrefix(prefix)
+		} else {
+			p.WriteString(start.Name.Local)
+			p.WriteString(` xmlns="`)
+			p.EscapeString(start.Name.Space)
+			p.WriteByte('"')
+			p.markPrefix("")
+		}
+	} else if len(p.prefixes) > 0 {
+		prefix := p.prefixes[len(p.prefixes)-1]
+		if prefix != "" {
+			p.WriteString(prefix)
+			p.WriteByte(':')
+		}
+		p.WriteString(start.Name.Local)
+		p.markPrefix(prefix)
+	} else {
+		p.WriteString(start.Name.Local)
+		p.markPrefix("")
 	}
 
 	// Attributes
@@ -745,9 +775,14 @@ func (p *printer) writeEnd(name Name) error {
 	p.writeIndent(-1)
 	p.WriteByte('<')
 	p.WriteByte('/')
+	prefix := p.popPrefix()
+	if prefix != "" {
+		p.WriteString(prefix)
+		p.WriteByte(':')
+	}
 	p.WriteString(name.Local)
 	p.WriteByte('>')
-	p.popPrefix()
+
 	return nil
 }
 
@@ -957,7 +992,7 @@ func (p *printer) marshalStruct(tinfo *typeInfo, val reflect.Value) error {
 	return p.cachedWriteError()
 }
 
-// return the bufio Writer's cached write error
+// return the bufio Writer's cached write error.
 func (p *printer) cachedWriteError() error {
 	_, err := p.Write(nil)
 	return err
@@ -992,6 +1027,21 @@ func (p *printer) writeIndent(depthDelta int) {
 		p.depth++
 		p.indentedIn = true
 	}
+}
+
+func (p *printer) setPrefixNS(prefix string, ns string) {
+	if p.attrPrefix == nil {
+		p.attrPrefix = make(map[string]string)
+	}
+	if p.attrNS == nil {
+		p.attrNS = make(map[string]string)
+	}
+	if p.prefixes == nil {
+		p.prefixes = make([]string, 0)
+	}
+	p.attrNS[prefix] = ns
+	p.attrPrefix[ns] = prefix
+	p.prefixes = append(p.prefixes, prefix)
 }
 
 type parentStack struct {

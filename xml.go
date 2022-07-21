@@ -41,7 +41,7 @@ func (e *SyntaxError) Error() string {
 // is given as a canonical URL, not the short prefix used
 // in the document being parsed.
 type Name struct {
-	Space, Local string
+	Space, Local, Prefix string
 }
 
 // An Attr represents an attribute in an XML element (Name=Value).

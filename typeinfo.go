@@ -19,11 +19,12 @@ type typeInfo struct {
 
 // fieldInfo holds details for the xml representation of a single field.
 type fieldInfo struct {
-	idx     []int
-	name    string
-	xmlns   string
-	flags   fieldFlags
-	parents []string
+	idx        []int
+	name       string
+	xmlns      string
+	flags      fieldFlags
+	parents    []string
+	namespaces map[string]string
 }
 
 type fieldFlags int
@@ -111,12 +112,15 @@ func getTypeInfo(typ reflect.Type) (*typeInfo, error) {
 
 // structFieldInfo builds and returns a fieldInfo for f.
 func structFieldInfo(typ reflect.Type, f *reflect.StructField) (*fieldInfo, error) {
-	finfo := &fieldInfo{idx: f.Index}
+	finfo := &fieldInfo{idx: f.Index, namespaces: map[string]string{}}
 
 	// Split the tag from the xml namespace if necessary.
 	tag := f.Tag.Get("xml")
 	if i := strings.Index(tag, " "); i >= 0 {
-		finfo.xmlns, tag = tag[:i], tag[i+1:]
+		var xmlns string
+		xmlns, tag = tag[:i], tag[i+1:]
+		finfo.namespaces = getNamespaces(xmlns)
+		finfo.xmlns = finfo.namespaces[""]
 	}
 
 	// Parse flags.
@@ -223,6 +227,24 @@ func structFieldInfo(typ reflect.Type, f *reflect.StructField) (*fieldInfo, erro
 		}
 	}
 	return finfo, nil
+}
+
+func getNamespaces(xmlns string) map[string]string {
+	tokens := strings.Split(xmlns, "|")
+	if len(tokens) < 2 {
+		return map[string]string{"": xmlns}
+	}
+
+	result := map[string]string{}
+	for _, token := range tokens {
+		kv := strings.Split(token, "=")
+		if len(kv) < 2 {
+			result[""] = token
+		} else {
+			result[kv[0]] = kv[1]
+		}
+	}
+	return result
 }
 
 // lookupXMLName returns the fieldInfo for typ's XMLName field

@@ -148,7 +148,7 @@ func (d *Decoder) DecodeElement(v interface{}, start *StartElement) error {
 	if val.Kind() != reflect.Ptr {
 		return errors.New("non-pointer passed to Unmarshal")
 	}
-	return d.unmarshal(val.Elem(), start, 0)
+	return d.unmarshal(val.Elem(), start)
 }
 
 // An UnmarshalError represents an error in the unmarshaling process.
@@ -304,15 +304,8 @@ var (
 	textUnmarshalerType = reflect.TypeOf((*encoding.TextUnmarshaler)(nil)).Elem()
 )
 
-const maxUnmarshalDepth = 10000
-
-var errExeceededMaxUnmarshalDepth = errors.New("exceeded max depth")
-
 // Unmarshal a single XML element into val.
-func (d *Decoder) unmarshal(val reflect.Value, start *StartElement, depth int) error {
-	if depth >= maxUnmarshalDepth {
-		return errExeceededMaxUnmarshalDepth
-	}
+func (d *Decoder) unmarshal(val reflect.Value, start *StartElement) error {
 	// Find start element if we need it.
 	if start == nil {
 		for {
@@ -405,7 +398,7 @@ func (d *Decoder) unmarshal(val reflect.Value, start *StartElement, depth int) e
 		v.Set(reflect.Append(val, reflect.Zero(v.Type().Elem())))
 
 		// Recur to read element into slice.
-		if err := d.unmarshal(v.Index(n), start, depth+1); err != nil {
+		if err := d.unmarshal(v.Index(n), start); err != nil {
 			v.SetLen(n)
 			return err
 		}
@@ -528,15 +521,13 @@ Loop:
 		case StartElement:
 			consumed := false
 			if sv.IsValid() {
-				// unmarshalPath can call unmarshal, so we need to pass the depth through so that
-				// we can continue to enforce the maximum recusion limit.
-				consumed, err = d.unmarshalPath(tinfo, sv, nil, &t, depth)
+				consumed, err = d.unmarshalPath(tinfo, sv, nil, &t)
 				if err != nil {
 					return err
 				}
 				if !consumed && saveAny.IsValid() {
 					consumed = true
-					if err := d.unmarshal(saveAny, &t, depth+1); err != nil {
+					if err := d.unmarshal(saveAny, &t); err != nil {
 						return err
 					}
 				}
@@ -681,7 +672,7 @@ func copyValue(dst reflect.Value, src []byte) (err error) {
 // The consumed result tells whether XML elements have been consumed
 // from the Decoder until start's matching end element, or if it's
 // still untouched because start is uninteresting for sv's fields.
-func (d *Decoder) unmarshalPath(tinfo *typeInfo, sv reflect.Value, parents []string, start *StartElement, depth int) (consumed bool, err error) {
+func (d *Decoder) unmarshalPath(tinfo *typeInfo, sv reflect.Value, parents []string, start *StartElement) (consumed bool, err error) {
 	recurse := false
 Loop:
 	for i := range tinfo.fields {
@@ -696,7 +687,7 @@ Loop:
 		}
 		if len(finfo.parents) == len(parents) && finfo.name == start.Name.Local {
 			// It's a perfect match, unmarshal the field.
-			return true, d.unmarshal(finfo.value(sv, initNilPointers), start, depth+1)
+			return true, d.unmarshal(finfo.value(sv, initNilPointers), start)
 		}
 		if len(finfo.parents) > len(parents) && finfo.parents[len(parents)] == start.Name.Local {
 			// It's a prefix for the field. Break and recurse
@@ -725,9 +716,7 @@ Loop:
 		}
 		switch t := tok.(type) {
 		case StartElement:
-			// the recursion depth of unmarshalPath is limited to the path length specified
-			// by the struct field tag, so we don't increment the depth here.
-			consumed2, err := d.unmarshalPath(tinfo, sv, parents, &t, depth)
+			consumed2, err := d.unmarshalPath(tinfo, sv, parents, &t)
 			if err != nil {
 				return true, err
 			}
@@ -743,12 +732,12 @@ Loop:
 }
 
 // Skip reads tokens until it has consumed the end element
-// matching the most recent start element already consumed,
-// skipping nested structures.
+// matching the most recent start element already consumed.
+// It recurs if it encounters a start element, so it can be used to
+// skip nested structures.
 // It returns nil if it finds an end element matching the start
 // element; otherwise it returns an error describing the problem.
 func (d *Decoder) Skip() error {
-	var depth int64
 	for {
 		tok, err := d.Token()
 		if err != nil {
@@ -756,12 +745,11 @@ func (d *Decoder) Skip() error {
 		}
 		switch tok.(type) {
 		case StartElement:
-			depth++
-		case EndElement:
-			if depth == 0 {
-				return nil
+			if err := d.Skip(); err != nil {
+				return err
 			}
-			depth--
+		case EndElement:
+			return nil
 		}
 	}
 }

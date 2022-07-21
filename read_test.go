@@ -5,11 +5,8 @@
 package xml
 
 import (
-	"bytes"
-	"errors"
 	"io"
 	"reflect"
-	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -120,7 +117,7 @@ type Text struct {
 }
 
 var atomFeed = Feed{
-	XMLName: Name{"http://www.w3.org/2005/Atom", "feed"},
+	XMLName: Name{"http://www.w3.org/2005/Atom", "feed", ""},
 	Title:   "Code Review - My issues",
 	Link: []Link{
 		{Rel: "alternate", Href: "http://codereview.appspot.com/"},
@@ -1080,34 +1077,5 @@ func TestUnmarshalWhitespaceAttrs(t *testing.T) {
 	}
 	if v != want {
 		t.Fatalf("whitespace attrs: Unmarshal:\nhave: %#+v\nwant: %#+v", v, want)
-	}
-}
-
-func TestCVE202230633(t *testing.T) {
-	if runtime.GOARCH == "wasm" {
-		t.Skip("causes memory exhaustion on js/wasm")
-	}
-	defer func() {
-		p := recover()
-		if p != nil {
-			t.Fatal("Unmarshal panicked")
-		}
-	}()
-	var example struct {
-		Things []string
-	}
-	Unmarshal(bytes.Repeat([]byte("<a>"), 17_000_000), &example)
-}
-
-func TestCVE202228131(t *testing.T) {
-	type nested struct {
-		Parent *nested `xml:",any"`
-	}
-	var n nested
-	err := Unmarshal(bytes.Repeat([]byte("<a>"), maxUnmarshalDepth+1), &n)
-	if err == nil {
-		t.Fatal("Unmarshal did not fail")
-	} else if !errors.Is(err, errExeceededMaxUnmarshalDepth) {
-		t.Fatalf("Unmarshal unexpected error: got %q, want %q", err, errExeceededMaxUnmarshalDepth)
 	}
 }
